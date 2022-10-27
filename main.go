@@ -3,14 +3,16 @@ package main
 import (
 	"flag"
 	"fmt"
+	"math"
 	"os"
 
 	"github.com/pbnjay/memory"
 )
 
 type Arguments struct {
-	InputFilename        string
-	OutputFilename       string
+	InputFilename  string
+	OutputFilename string
+
 	MaxBytesMemoryForUse uint
 }
 
@@ -19,7 +21,8 @@ func parseInputArguments() Arguments {
 
 	flag.StringVar(&args.OutputFilename, "o", "", "output filename")
 	flag.StringVar(&args.InputFilename, "i", "", "input filename")
-	flag.UintVar(&args.MaxBytesMemoryForUse, "m", 0, "max memory size in bytes for program to use")
+
+	flag.UintVar(&args.MaxBytesMemoryForUse, "m", 0, "approx. max memory size in bytes for program to use")
 
 	flag.Parse()
 
@@ -28,11 +31,11 @@ func parseInputArguments() Arguments {
 
 func checkInputArguments(args Arguments) error {
 	if args.InputFilename == "" {
-		return fmt.Errorf("input file should be specified")
+		return fmt.Errorf("input file must be specified")
 	}
 
 	if args.OutputFilename == "" {
-		return fmt.Errorf("output file should be specified")
+		return fmt.Errorf("output file must be specified")
 	}
 
 	if free := memory.FreeMemory(); uint64(args.MaxBytesMemoryForUse) > free {
@@ -45,6 +48,16 @@ func checkInputArguments(args Arguments) error {
 	return nil
 }
 
+func prepareInputArguments(args *Arguments) {
+	if args.MaxBytesMemoryForUse == 0 {
+		maxAllowed := memory.FreeMemory() / 3 * 2
+		if maxAllowed > math.MaxUint {
+			maxAllowed = math.MaxUint
+		}
+		args.MaxBytesMemoryForUse = uint(maxAllowed)
+	}
+}
+
 func main() {
 	args := parseInputArguments()
 
@@ -52,6 +65,8 @@ func main() {
 		fmt.Printf("input arguments error: %s", err)
 		os.Exit(1)
 	}
+
+	prepareInputArguments(&args)
 
 	sorter := FileSorter{
 		In:             args.InputFilename,

@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os"
+	"sort"
 )
 
 type FileSorter struct {
@@ -12,15 +14,60 @@ type FileSorter struct {
 }
 
 const MaxByteCountToCopy = 50000000
+const MaxRealCountOfExistedLargeArrays = 4
+const Separator = '\n'
 
-func (s FileSorter) logSort(in []byte) ([]string, uint) {
-	// todo написать сортировку n log n
-	return []string{}, 0
+type byteSlices [][]byte
+
+func (b byteSlices) Len() int {
+	return len(b)
 }
 
-func (s FileSorter) insertToSorted(in []string, add string) []string {
-	// todo написать вставку в отсортированный слайс
-	return []string{}
+func (b byteSlices) Less(i, j int) bool {
+	return bytes.Compare(b[i], b[j]) == -1
+}
+
+func (b byteSlices) Swap(i, j int) {
+	b[i], b[j] = b[j], b[i]
+}
+
+// logSort сортировка чанка за n log n
+func (s FileSorter) logSort(in []byte) (sorted [][]byte, left uint) {
+	start := 0
+	curr := 0
+
+	for ; curr < len(in); curr++ {
+		if in[curr] == Separator {
+			sorted = append(sorted, in[start:curr])
+			start = curr + 1
+		}
+	}
+
+	left = uint(len(in) - start)
+
+	sort.Sort(byteSlices(sorted))
+
+	return
+}
+
+func (s FileSorter) getMaxSingleArraySize() int {
+	return int(s.MaxBytesMemory / MaxRealCountOfExistedLargeArrays)
+}
+
+func (s FileSorter) insertToSorted(in [][]byte, add []byte) (out [][]byte) {
+	out = append(in, add)
+	var i int
+	defer func() {
+		out[i] = add
+	}()
+
+	for i = len(in) - 1; i > 0; i-- {
+		if bytes.Compare(in[i-1], add) < 1 {
+			return
+		}
+		in[i] = in[i-1]
+	}
+	return
 }
 
 func (s FileSorter) Sort() error {
@@ -37,13 +84,13 @@ func (s FileSorter) Sort() error {
 	defer out.Close()
 
 	fullOffset, _ := in.Seek(0, 2)
-	lastByte := []byte{'\n'}
+	lastByte := []byte{Separator}
 	readLast, _ := in.Read(lastByte)
 	if readLast != 1 {
 		return fmt.Errorf("cannot read last symbol of input file")
 	}
 	var outSize int64
-	if lastByte[0] == '\n' {
+	if lastByte[0] == Separator {
 		outSize = fullOffset + 1
 	} else {
 		outSize = fullOffset + 2
@@ -53,14 +100,14 @@ func (s FileSorter) Sort() error {
 	}
 	_, _ = in.Seek(0, 0)
 
-	maxSingleArraySize := int(s.MaxBytesMemory / 4)
+	maxSingleArraySize := s.getMaxSingleArraySize()
 
 	forLogSort := make([]byte, maxSingleArraySize)
 
 	// В рамках сортировки считается, что слово содержит в себе перенос строки
 
 	var left uint       // длина обрубленного в конце слова, которое нужно считать заново
-	var sorted []string // быстро отсортированная часть считанного буфера
+	var sorted [][]byte // быстро отсортированная часть считанного буфера
 	var read int        // считано в последний раз
 
 	var (
@@ -91,11 +138,11 @@ func (s FileSorter) Sort() error {
 			}
 
 			last := forLogSort[uint(len(forLogSort))-left:]
-			if last[len(last)-1] != '\n' {
-				last = append(last, '\n')
+			if last[len(last)-1] != Separator {
+				last = append(last, Separator)
 			}
 
-			sorted = s.insertToSorted(sorted, string(last))
+			sorted = s.insertToSorted(sorted, last)
 			currentSumReadStringLen += uint(len(last))
 		} else {
 			_, err = in.Seek(int64(-left), 1)
@@ -133,7 +180,7 @@ func (s FileSorter) Sort() error {
 
 				sortedLessOrEqualThanCurrentOld := false
 				for !sortedLessOrEqualThanCurrentOld {
-					for _ = startOfWord; startOfWord < int(sortedOldRightPos-sortedOldLeftPos) && bytesToCopy[startOfWord] != '\n'; startOfWord++ {
+					for _ = startOfWord; startOfWord < int(sortedOldRightPos-sortedOldLeftPos) && bytesToCopy[startOfWord] != Separator; startOfWord++ {
 					}
 					startOfWord++
 
@@ -150,7 +197,7 @@ func (s FileSorter) Sort() error {
 							break
 						}
 
-						if bytesToCopy[i+startOfWord] == '\n' {
+						if bytesToCopy[i+startOfWord] == Separator {
 							break
 						}
 					}
@@ -168,7 +215,9 @@ func (s FileSorter) Sort() error {
 				sortedOldLeftPos += int64(startOfWord)
 			}
 
-			_, err = out.WriteString(sorted[currChunkPos])
+			processingLeft -= int64(len(sorted[currChunkPos]))
+			_, _ = out.Seek(processingLeft, 0)
+			_, err = out.Write(sorted[currChunkPos])
 			if err != nil {
 				return fmt.Errorf("writing error: %v", err)
 			}

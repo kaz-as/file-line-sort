@@ -13,7 +13,8 @@ type Arguments struct {
 	InputFilename  string
 	OutputFilename string
 
-	MaxBytesMemoryForUse uint
+	MaxBytesMemoryForUse         uint
+	MaxBytesMemoryToCopyInChunks uint
 }
 
 func parseInputArguments() Arguments {
@@ -22,7 +23,8 @@ func parseInputArguments() Arguments {
 	flag.StringVar(&args.OutputFilename, "o", "", "output filename")
 	flag.StringVar(&args.InputFilename, "i", "", "input filename")
 
-	flag.UintVar(&args.MaxBytesMemoryForUse, "m", 0, "approx. max memory size in bytes for program to use")
+	flag.UintVar(&args.MaxBytesMemoryForUse, "m", 0, "approx. max memory size for program to use")
+	flag.UintVar(&args.MaxBytesMemoryToCopyInChunks, "mc", 50_000_000, "copy buffer size")
 
 	flag.Parse()
 
@@ -72,6 +74,7 @@ func main() {
 		In:             args.InputFilename,
 		Out:            args.OutputFilename,
 		MaxBytesMemory: args.MaxBytesMemoryForUse,
+		MaxBytesBuffer: args.MaxBytesMemoryToCopyInChunks,
 	}
 
 	if err := sorter.Sort(); err != nil {

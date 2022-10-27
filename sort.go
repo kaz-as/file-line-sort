@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 )
@@ -11,10 +13,10 @@ type FileSorter struct {
 	In             string
 	Out            string
 	MaxBytesMemory uint
+	MaxBytesBuffer uint
 }
 
-const MaxByteCountToCopy = 50000000
-const MaxRealCountOfExistedLargeArrays = 4
+const MaxRealCountOfExistedLargeArrays = 2
 const Separator = '\n'
 
 type byteSlices [][]byte
@@ -38,7 +40,7 @@ func (s FileSorter) logSort(in []byte) (sorted [][]byte, left uint) {
 
 	for ; curr < len(in); curr++ {
 		if in[curr] == Separator {
-			sorted = append(sorted, in[start:curr])
+			sorted = append(sorted, in[start:curr+1])
 			start = curr + 1
 		}
 	}
@@ -77,15 +79,21 @@ func (s FileSorter) Sort() error {
 	}
 	defer in.Close()
 
-	out, err := os.OpenFile(s.Out, os.O_RDWR, 0)
+	out, err := os.OpenFile(s.Out, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		return fmt.Errorf("open output file error: %s", err)
 	}
 	defer out.Close()
 
-	fullOffset, _ := in.Seek(0, 2)
+	fullOffset, err := in.Seek(-1, 2)
+	if err != nil {
+		return fmt.Errorf("seek to last byte error: %s", err)
+	}
 	lastByte := []byte{Separator}
-	readLast, _ := in.Read(lastByte)
+	readLast, err := in.Read(lastByte)
+	if err != nil {
+		return fmt.Errorf("read last byte error: %s", err)
+	}
 	if readLast != 1 {
 		return fmt.Errorf("cannot read last symbol of input file")
 	}
@@ -117,14 +125,17 @@ func (s FileSorter) Sort() error {
 		processingRight   int64 = 0
 	)
 
-	bytesToCopy := make([]byte, MaxByteCountToCopy)
+	bytesToCopy := make([]byte, s.MaxBytesBuffer)
 
 	for {
 		read, err = in.Read(forLogSort)
+		if errors.Is(err, io.EOF) {
+			break
+		}
 		if err != nil {
 			return fmt.Errorf("read input file error: %s", err)
 		}
-		if read == 0 || read == maxSingleArraySize {
+		if read == 0 {
 			break
 		}
 
@@ -139,7 +150,7 @@ func (s FileSorter) Sort() error {
 
 			last := forLogSort[uint(len(forLogSort))-left:]
 			if last[len(last)-1] != Separator {
-				last = append(last, Separator)
+				last = []byte(string(last) + string(Separator))
 			}
 
 			sorted = s.insertToSorted(sorted, last)
@@ -162,7 +173,7 @@ func (s FileSorter) Sort() error {
 			needNextToLeft := true // делать false, когда надо переходить на следующую позицию в новом отсортированном
 
 			for needNextToLeft {
-				sortedOldLeftPos = sortedOldRightPos - MaxByteCountToCopy
+				sortedOldLeftPos = sortedOldRightPos - int64(s.MaxBytesBuffer)
 				if sortedOldLeftPos < 0 {
 					sortedOldLeftPos = 0
 				}

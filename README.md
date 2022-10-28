@@ -4,6 +4,8 @@
 
 The program sorts lines of large files without extra memory usage more than O(1).
 
+The program does not change input file and does not create any temporary files.
+
 ## Description
 
 The program contains a sorting part itself, a large file generator for testing purposes,

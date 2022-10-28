@@ -13,11 +13,11 @@ import (
 type Arguments struct {
 	Folder      string
 	MaxLineSize int
+	LineCount   uint64
 
-	Prefix   string
-	Suffix   string
-	Count    uint
-	FileSize uint64
+	Prefix string
+	Suffix string
+	Count  uint
 }
 
 func parseInputArguments() Arguments {
@@ -25,11 +25,11 @@ func parseInputArguments() Arguments {
 
 	flag.StringVar(&args.Folder, "i", "", "input folder (must exist)")
 	flag.IntVar(&args.MaxLineSize, "l", 1_000_000, "max line size")
+	flag.Uint64Var(&args.LineCount, "s", 20_000, "line count")
 
 	flag.StringVar(&args.Prefix, "prefix", "", "additional: output filename prefix")
 	flag.StringVar(&args.Suffix, "suffix", "", "additional: output filename suffix")
 	flag.UintVar(&args.Count, "c", 1, "additional: how many files to generate")
-	flag.Uint64Var(&args.FileSize, "s", 30_000_000_000, "additional: file size")
 
 	flag.Parse()
 
@@ -63,7 +63,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	fileSizeFinishCondition := args.FileSize - uint64(args.MaxLineSize) - 1
 	alphabet := getAlphabet()
 
 	for i := uint(0); i < args.Count; i++ {
@@ -77,10 +76,10 @@ func main() {
 
 			w := bufio.NewWriter(file)
 
-			for currFileSize := uint64(0); currFileSize < fileSizeFinishCondition; {
+			for j := uint64(0); j < args.LineCount; j++ {
 				currLineSize := rand.Intn(args.MaxLineSize + 1)
 				var line []byte
-				for j := 0; j < currLineSize; j++ {
+				for k := 0; k < currLineSize; k++ {
 					line = append(line, alphabet[rand.Intn(len(alphabet))])
 				}
 				line = append(line, '\n')
@@ -88,8 +87,6 @@ func main() {
 				if err != nil {
 					return err
 				}
-
-				currFileSize += uint64(currLineSize)
 			}
 
 			return w.Flush()

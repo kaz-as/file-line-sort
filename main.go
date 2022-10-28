@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"time"
 
 	"github.com/pbnjay/memory"
 )
@@ -77,8 +78,10 @@ func main() {
 		MaxBytesBuffer: args.MaxBytesMemoryToCopyInChunks,
 	}
 
+	t1 := time.Now()
 	if err := sorter.Sort(); err != nil {
 		fmt.Printf("sort error: %s", err)
 		os.Exit(1)
 	}
+	fmt.Printf("minutes spent: %v", time.Now().Sub(t1).Minutes())
 }

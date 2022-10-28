@@ -189,16 +189,14 @@ func (s FileSorter) Sort() error {
 
 				startOfWord := 0
 
-				sortedLessOrEqualThanCurrentOld := false
-				for !sortedLessOrEqualThanCurrentOld {
-					for _ = startOfWord; startOfWord < int(sortedOldRightPos-sortedOldLeftPos) && bytesToCopy[startOfWord] != Separator; startOfWord++ {
+				if sortedOldLeftPos != 0 {
+					for ; startOfWord < int(sortedOldRightPos-sortedOldLeftPos) && bytesToCopy[startOfWord] != Separator; startOfWord++ {
 					}
 					startOfWord++
+				}
 
-					if startOfWord >= int(sortedOldRightPos-sortedOldLeftPos) {
-						break
-					}
-
+				sortedLessOrEqualThanCurrentOld := false
+				for !sortedLessOrEqualThanCurrentOld && startOfWord < int(sortedOldRightPos-sortedOldLeftPos) {
 					sortedLessOrEqualThanCurrentOld = true
 					currString := sorted[currChunkPos]
 					for i := 0; i < len(currString); i++ {
@@ -207,10 +205,19 @@ func (s FileSorter) Sort() error {
 							needNextToLeft = false
 							break
 						}
-
-						if bytesToCopy[i+startOfWord] == Separator {
+						if bytesToCopy[i+startOfWord] > currString[i] {
 							break
 						}
+
+						if bytesToCopy[i+startOfWord] == Separator || currString[i] == Separator {
+							break
+						}
+					}
+
+					if !sortedLessOrEqualThanCurrentOld {
+						for ; startOfWord < int(sortedOldRightPos-sortedOldLeftPos) && bytesToCopy[startOfWord] != Separator; startOfWord++ {
+						}
+						startOfWord++
 					}
 				}
 
@@ -218,12 +225,14 @@ func (s FileSorter) Sort() error {
 					lenToCopy := sortedOldRightPos - sortedOldLeftPos - int64(startOfWord)
 					processingLeft -= lenToCopy
 					_, _ = out.Seek(processingLeft, 0)
-					_, err = out.Write(bytesToCopy[startOfWord:])
+					_, err = out.Write(bytesToCopy[startOfWord : sortedOldRightPos-sortedOldLeftPos])
 					if err != nil {
 						return fmt.Errorf("writing error: %v", err)
 					}
 				}
-				sortedOldLeftPos += int64(startOfWord)
+				if sortedOldRightPos > sortedOldLeftPos {
+					sortedOldRightPos = sortedOldLeftPos + int64(startOfWord)
+				}
 			}
 
 			processingLeft -= int64(len(sorted[currChunkPos]))

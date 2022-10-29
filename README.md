@@ -29,7 +29,7 @@ Optional:
 
 #### Example
 ```bash
-./bin/sort -i /path/to/folder/input_4d65822107fcfd52.txt -o /path/to/folder/sorted_4d65822107fcfd52.txt -m 5000000000 -mc 50000000
+./bin/sort -i /path/to/folder/input_4d65822107fcfd52.txt -o /path/to/folder/sorted_4d65822107fcfd52.txt -m 100000000 -mc 30000000
 ```
 
 ### Generate
@@ -46,8 +46,10 @@ Optional:
 
 #### Example
 ```bash
-./bin/generate -i /path/to/folder/ -c 1 -l 5000 -s 2000000 -prefix input_ -suffix .txt
+./bin/generate -i /path/to/folder/ -c 1 -l 500 -s 800000 -prefix input_ -suffix .txt
 ```
+
+200 Mb file is processed per 4 hours with the program with the parameters above.
 
 ### Checker
 All arguments are files to check.
@@ -62,8 +64,17 @@ If a file is not sorted, the program prints info about that.
 ## Algorithm
 Asymptotic is O(n^2).
 
-// todo
+Due to forbiddance of any temporary files, the program cannot use external sorting algorithms, thus asymptotic
+cannot be improved.
+
+Sort O(n log n) chunks of `-m` size. For a sorted chunk in memory and sorted all previous data in output file search do
+for each line in the chunk starting from the end find a chunk in the file of `-mc` size which contains the "rightest"
+line greater or equal than the line in memory *(O(n) for each, can be improved to O(log n))* and move all data in the
+output file from this found position to the right to the final (for this sorted chunk in memory) position and write the
+line in the sorted chunk right before the moved data.
 
 ## Further improvements
-
 1. Make search of an element in already sorted part of the output file not linear, but binary.
+It would improve constant, not asymptotic.
+2. If usage of temporary files is allowed, use standard external sorting algorithms.
+It would improve asymptotic to O(n log n).

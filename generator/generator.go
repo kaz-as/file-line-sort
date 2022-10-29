@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 )
 
 type Arguments struct {
@@ -64,10 +65,11 @@ func main() {
 	}
 
 	alphabet := getAlphabet()
+	rnd := rand.New(rand.NewSource(time.Now().UnixMilli()))
 
 	for i := uint(0); i < args.Count; i++ {
 		err := func() error {
-			newFileName := args.Prefix + strconv.FormatUint(rand.Uint64(), 16) + args.Suffix
+			newFileName := args.Prefix + strconv.FormatUint(rnd.Uint64(), 16) + args.Suffix
 			file, err := os.Create(filepath.Join(args.Folder, newFileName))
 			if err != nil {
 				return fmt.Errorf("cannot create file %s: %s", newFileName, err)

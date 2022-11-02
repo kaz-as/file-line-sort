@@ -14,8 +14,7 @@ type Arguments struct {
 	InputFilename  string
 	OutputFilename string
 
-	MaxBytesMemoryForUse         uint
-	MaxBytesMemoryToCopyInChunks uint
+	MaxBytesMemoryForUse uint64
 }
 
 func parseInputArguments() Arguments {
@@ -24,8 +23,7 @@ func parseInputArguments() Arguments {
 	flag.StringVar(&args.OutputFilename, "o", "", "output filename")
 	flag.StringVar(&args.InputFilename, "i", "", "input filename")
 
-	flag.UintVar(&args.MaxBytesMemoryForUse, "m", 0, "approx. max memory size for program to use")
-	flag.UintVar(&args.MaxBytesMemoryToCopyInChunks, "mc", 50_000_000, "copy buffer size")
+	flag.Uint64Var(&args.MaxBytesMemoryForUse, "m", 0, "approx. max memory size for program to use")
 
 	flag.Parse()
 
@@ -41,7 +39,7 @@ func checkInputArguments(args Arguments) error {
 		return fmt.Errorf("output file must be specified")
 	}
 
-	if free := memory.FreeMemory(); uint64(args.MaxBytesMemoryForUse) > free {
+	if free := memory.FreeMemory(); args.MaxBytesMemoryForUse > free {
 		return fmt.Errorf("max memory for use %d cannot be larger than free memory %d",
 			args.MaxBytesMemoryForUse,
 			free,
@@ -57,7 +55,7 @@ func prepareInputArguments(args *Arguments) {
 		if maxAllowed > math.MaxUint {
 			maxAllowed = math.MaxUint
 		}
-		args.MaxBytesMemoryForUse = uint(maxAllowed)
+		args.MaxBytesMemoryForUse = maxAllowed
 	}
 }
 
@@ -75,7 +73,6 @@ func main() {
 		In:             args.InputFilename,
 		Out:            args.OutputFilename,
 		MaxBytesMemory: args.MaxBytesMemoryForUse,
-		MaxBytesBuffer: args.MaxBytesMemoryToCopyInChunks,
 	}
 
 	t1 := time.Now()

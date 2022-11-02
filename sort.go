@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
+	"container/heap"
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
+	"math"
 	"os"
 	"sort"
 )
@@ -12,11 +16,9 @@ import (
 type FileSorter struct {
 	In             string
 	Out            string
-	MaxBytesMemory uint
-	MaxBytesBuffer uint
+	MaxBytesMemory uint64
 }
 
-const MaxRealCountOfExistedLargeArrays = 2
 const Separator = '\n'
 
 type byteSlices [][]byte
@@ -34,7 +36,7 @@ func (b byteSlices) Swap(i, j int) {
 }
 
 // logSort сортировка чанка за n log n
-func (s FileSorter) logSort(in []byte) (sorted [][]byte, left uint) {
+func (s FileSorter) logSort(in []byte) (sorted [][]byte, left int) {
 	start := 0
 	curr := 0
 
@@ -45,204 +47,242 @@ func (s FileSorter) logSort(in []byte) (sorted [][]byte, left uint) {
 		}
 	}
 
-	left = uint(len(in) - start)
+	left = len(in) - start
 
 	sort.Sort(byteSlices(sorted))
 
 	return
 }
 
-func (s FileSorter) getMaxSingleArraySize() int {
-	return int(s.MaxBytesMemory / MaxRealCountOfExistedLargeArrays)
-}
-
-func (s FileSorter) insertToSorted(in [][]byte, add []byte) (out [][]byte) {
-	out = append(in, add)
-	var i int
-	defer func() {
-		out[i] = add
-	}()
-
-	for i = len(in) - 1; i > 0; i-- {
-		if bytes.Compare(in[i-1], add) < 1 {
-			return
-		}
-		in[i] = in[i-1]
-	}
-	return
-}
-
-func (s FileSorter) Sort() error {
+func (s FileSorter) maxLineSize() (uint64, error) {
 	in, err := os.OpenFile(s.In, os.O_RDONLY, 0)
 	if err != nil {
-		return fmt.Errorf("open input file error: %s", err)
+		return 0, fmt.Errorf("open input file error: %w", err)
 	}
 	defer in.Close()
 
+	size := math.MaxInt
+	if s.MaxBytesMemory < uint64(size) {
+		size = int(s.MaxBytesMemory)
+	}
+	f := bufio.NewReaderSize(in, size)
+
+	maxSize := uint64(0)
+	currSize := uint64(0)
+	b, err := f.ReadByte()
+	for err == nil {
+		if b == Separator {
+			if maxSize < currSize {
+				maxSize = currSize
+			}
+			currSize = 0
+		} else {
+			currSize++
+		}
+
+		b, err = f.ReadByte()
+	}
+
+	if errors.Is(err, io.EOF) {
+		if maxSize < currSize {
+			maxSize = currSize
+		}
+		return maxSize, nil
+	}
+
+	return 0, err
+}
+
+func (s FileSorter) Sort() error {
+	//maxLineSize, err := s.maxLineSize()
+	//if err != nil {
+	//	return fmt.Errorf("get max line size error: %w", err)
+	//}
+	oneMemory := math.MaxInt
+	if s.MaxBytesMemory/3 < uint64(oneMemory) {
+		oneMemory = int(s.MaxBytesMemory / 3)
+	}
+	//if maxLineSize > uint64(oneMemory/20) {
+	//	return fmt.Errorf("too large string exists len=%d", maxLineSize)
+	//}
+
+	in, err := os.OpenFile(s.In, os.O_RDONLY, 0)
+	if err != nil {
+		return fmt.Errorf("open input file error: %w", err)
+	}
+	defer in.Close()
+
+	inStat, err := in.Stat()
+	if err != nil {
+		return fmt.Errorf("stat input file error: %w", err)
+	}
+
 	out, err := os.OpenFile(s.Out, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
-		return fmt.Errorf("open output file error: %s", err)
+		return fmt.Errorf("open output file error: %w", err)
 	}
 	defer out.Close()
-
-	fullOffset, err := in.Seek(-1, 2)
+	err = out.Truncate(inStat.Size())
 	if err != nil {
-		return fmt.Errorf("seek to last byte error: %s", err)
+		return fmt.Errorf("change output file size error: %w", err)
 	}
-	lastByte := []byte{Separator}
-	readLast, err := in.Read(lastByte)
+
+	tempDir, err := ioutil.TempDir("", "file-line-sort-")
 	if err != nil {
-		return fmt.Errorf("read last byte error: %s", err)
+		return fmt.Errorf("create temp directory error: %w", err)
 	}
-	if readLast != 1 {
-		return fmt.Errorf("cannot read last symbol of input file")
+	defer os.RemoveAll(tempDir)
+
+	tempFilesApproxCountInt64 := inStat.Size() / int64(oneMemory)
+	if tempFilesApproxCountInt64 >= math.MaxInt {
+		return fmt.Errorf("too small RAM amount allowed to use")
 	}
-	var outSize int64
-	if lastByte[0] == Separator {
-		outSize = fullOffset + 1
-	} else {
-		outSize = fullOffset + 2
+	tempFilesApproxCountInt64 = tempFilesApproxCountInt64 + tempFilesApproxCountInt64/50 + 1
+	if tempFilesApproxCountInt64 >= math.MaxInt {
+		return fmt.Errorf("too small RAM amount allowed to use")
 	}
-	if err := out.Truncate(outSize); err != nil {
-		return fmt.Errorf("change output file size error: %s", err)
-	}
-	_, _ = in.Seek(0, 0)
 
-	maxSingleArraySize := s.getMaxSingleArraySize()
+	tempFilesApproxCount := int(tempFilesApproxCountInt64)
 
-	forLogSort := make([]byte, maxSingleArraySize)
+	tempFiles := make([]*os.File, 0, tempFilesApproxCount)
+	defer func() {
+		for _, file := range tempFiles {
+			file.Close()
+		}
+	}()
 
-	// В рамках сортировки считается, что слово содержит в себе перенос строки
-
-	var left uint       // длина обрубленного в конце слова, которое нужно считать заново
-	var sorted [][]byte // быстро отсортированная часть считанного буфера
-	var read int        // считано в последний раз
-
-	var (
-		sortedOldLeftPos  int64 = 0
-		sortedOldRightPos int64 = 0
-		processingLeft    int64 = 0
-		processingRight   int64 = 0
-	)
-
-	bytesToCopy := make([]byte, s.MaxBytesBuffer)
-
+	// первичная сортировка
+	inputBuffer := make([]byte, oneMemory)
 	for {
-		read, err = in.Read(forLogSort)
-		if errors.Is(err, io.EOF) {
-			break
-		}
+		n, err := in.Read(inputBuffer)
 		if err != nil {
-			return fmt.Errorf("read input file error: %s", err)
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return fmt.Errorf("error reading input file: %w", err)
 		}
-		if read == 0 {
-			break
+		realInputBuffer := inputBuffer[:n]
+
+		sorted, left := s.logSort(realInputBuffer)
+		_, err = in.Seek(int64(-left), 1)
+		if err != nil {
+			return fmt.Errorf("seek input file error: %w", err)
 		}
 
-		sorted, left = s.logSort(forLogSort[:read])
+		file, err := ioutil.TempFile(tempDir, "tmpfile-*")
+		if err != nil {
+			return err
+		}
+		err = file.Truncate(int64(n - left))
+		if err != nil {
+			return fmt.Errorf("change temp file size error: %w", err)
+		}
 
-		currentSumReadStringLen := uint(read) - left
+		tmpBuf := bufio.NewWriterSize(file, oneMemory)
+		for _, str := range sorted {
+			_, err = tmpBuf.Write(str)
+			if err != nil {
+				return fmt.Errorf("write to temp file buffer error: %w", err)
+			}
+		}
+		err = tmpBuf.Flush()
+		if err != nil {
+			return fmt.Errorf("flush to temp file error: %w", err)
+		}
 
-		if left == uint(read) {
-			if read == maxSingleArraySize {
-				return fmt.Errorf("too large line encountered, size=%d", left)
+		tempFiles = append(tempFiles, file)
+	}
+
+	// n-merge
+	outBuf := bufio.NewWriterSize(out, oneMemory/tempFilesApproxCount)
+	inBufs := make([]*bufio.Reader, 0, len(tempFiles))
+	for _, file := range tempFiles {
+		_, err = file.Seek(0, 0)
+		if err != nil {
+			return fmt.Errorf("tmp file seek error: %w", err)
+		}
+		inBufs = append(inBufs, bufio.NewReaderSize(file, oneMemory/tempFilesApproxCount))
+	}
+
+	hList := make([]heapElement, 0, len(tempFiles))
+	for _, inBuf := range inBufs {
+		str, err := inBuf.ReadString(Separator)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				continue
+			}
+			return fmt.Errorf("read from temp file error: %w", err)
+		}
+
+		hList = append(hList, heapElement{
+			s:      str,
+			reader: inBuf,
+		})
+	}
+
+	h := (*heapList)(&hList)
+	heap.Init(h)
+
+	for h.Len() > 0 {
+		min := (*h)[0]
+		str, err := min.reader.ReadString(Separator)
+		if err != nil {
+			if !errors.Is(err, io.EOF) {
+				return fmt.Errorf("read from temp file error: %w", err)
 			}
 
-			last := forLogSort[uint(len(forLogSort))-left:]
-			if last[len(last)-1] != Separator {
-				last = []byte(string(last) + string(Separator))
+			toOut := heap.Pop(h).(heapElement).s
+			_, err = outBuf.WriteString(toOut)
+			if err != nil {
+				return fmt.Errorf("write to output buffer error: %w", err)
 			}
 
-			sorted = s.insertToSorted(sorted, last)
-			currentSumReadStringLen += uint(len(last))
 		} else {
-			_, err = in.Seek(int64(-left), 1)
+			_, err = outBuf.WriteString(min.s)
 			if err != nil {
-				return fmt.Errorf("change offset in input file error: %s", err)
+				return fmt.Errorf("write to output buffer error: %w", err)
 			}
+
+			(*h)[0].s = str
+			heap.Fix(h, 0)
 		}
+	}
 
-		// вставка в файл вывода с последовательным сдвигом с конца уже записанного
-
-		sortedOldRightPos = processingRight
-
-		processingRight += int64(currentSumReadStringLen)
-		processingLeft = processingRight
-
-		for currChunkPos := len(sorted) - 1; currChunkPos >= 0; currChunkPos-- {
-			needNextToLeft := true // делать false, когда надо переходить на следующую позицию в новом отсортированном
-
-			for needNextToLeft {
-				sortedOldLeftPos = sortedOldRightPos - int64(s.MaxBytesBuffer)
-				if sortedOldLeftPos < 0 {
-					sortedOldLeftPos = 0
-				}
-				if sortedOldLeftPos == 0 {
-					needNextToLeft = false
-				}
-
-				_, _ = out.Seek(sortedOldLeftPos, 0)
-				_, err = out.Read(bytesToCopy[:sortedOldRightPos-sortedOldLeftPos])
-				if err != nil {
-					return fmt.Errorf("read output file error: %s", err)
-				}
-
-				startOfWord := 0
-
-				if sortedOldLeftPos != 0 {
-					for ; startOfWord < int(sortedOldRightPos-sortedOldLeftPos) && bytesToCopy[startOfWord] != Separator; startOfWord++ {
-					}
-					startOfWord++
-				}
-
-				sortedLessOrEqualThanCurrentOld := false
-				for !sortedLessOrEqualThanCurrentOld && startOfWord < int(sortedOldRightPos-sortedOldLeftPos) {
-					sortedLessOrEqualThanCurrentOld = true
-					currString := sorted[currChunkPos]
-					for i := 0; i < len(currString); i++ {
-						if bytesToCopy[i+startOfWord] < currString[i] {
-							sortedLessOrEqualThanCurrentOld = false
-							needNextToLeft = false
-							break
-						}
-						if bytesToCopy[i+startOfWord] > currString[i] {
-							break
-						}
-
-						if bytesToCopy[i+startOfWord] == Separator || currString[i] == Separator {
-							break
-						}
-					}
-
-					if !sortedLessOrEqualThanCurrentOld {
-						for ; startOfWord < int(sortedOldRightPos-sortedOldLeftPos) && bytesToCopy[startOfWord] != Separator; startOfWord++ {
-						}
-						startOfWord++
-					}
-				}
-
-				if sortedLessOrEqualThanCurrentOld {
-					lenToCopy := sortedOldRightPos - sortedOldLeftPos - int64(startOfWord)
-					processingLeft -= lenToCopy
-					_, _ = out.Seek(processingLeft, 0)
-					_, err = out.Write(bytesToCopy[startOfWord : sortedOldRightPos-sortedOldLeftPos])
-					if err != nil {
-						return fmt.Errorf("writing error: %v", err)
-					}
-				}
-				if sortedOldRightPos > sortedOldLeftPos {
-					sortedOldRightPos = sortedOldLeftPos + int64(startOfWord)
-				}
-			}
-
-			processingLeft -= int64(len(sorted[currChunkPos]))
-			_, _ = out.Seek(processingLeft, 0)
-			_, err = out.Write(sorted[currChunkPos])
-			if err != nil {
-				return fmt.Errorf("writing error: %v", err)
-			}
-		}
+	err = outBuf.Flush()
+	if err != nil {
+		return fmt.Errorf("flush output buffer error: %w", err)
 	}
 
 	return nil
+}
+
+type heapElement struct {
+	s      string
+	reader *bufio.Reader
+}
+
+type heapList []heapElement
+
+func (h *heapList) Len() int {
+	return len(*h)
+}
+
+func (h *heapList) Less(i, j int) bool {
+	return (*h)[i].s < (*h)[j].s
+}
+
+func (h *heapList) Swap(i, j int) {
+	(*h)[i], (*h)[j] = (*h)[j], (*h)[i]
+}
+
+func (h *heapList) Push(x any) {
+	*h = append(*h, x.(heapElement))
+}
+
+func (h *heapList) Pop() any {
+	old := *h
+	n := len(old)
+	x := old[n-1]
+	*h = old[:n-1]
+	return x
 }

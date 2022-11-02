@@ -67,6 +67,7 @@ func main() {
 	alphabet := getAlphabet()
 	rnd := rand.New(rand.NewSource(time.Now().UnixMilli()))
 
+	line := make([]byte, 0, args.MaxLineSize+1)
 	for i := uint(0); i < args.Count; i++ {
 		err := func() error {
 			newFileName := args.Prefix + strconv.FormatUint(rnd.Uint64(), 16) + args.Suffix
@@ -80,7 +81,7 @@ func main() {
 
 			for j := uint64(0); j < args.LineCount; j++ {
 				currLineSize := rand.Intn(args.MaxLineSize + 1)
-				var line []byte
+				line = line[:0]
 				for k := 0; k < currLineSize; k++ {
 					line = append(line, alphabet[rand.Intn(len(alphabet))])
 				}

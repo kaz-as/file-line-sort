@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"container/heap"
 	"errors"
 	"fmt"
@@ -10,6 +9,7 @@ import (
 	"io/ioutil"
 	"math"
 	"os"
+	"runtime"
 	"sort"
 )
 
@@ -21,37 +21,18 @@ type FileSorter struct {
 
 const Separator = '\n'
 
-type byteSlices [][]byte
+type byteSlices []string
 
 func (b byteSlices) Len() int {
 	return len(b)
 }
 
 func (b byteSlices) Less(i, j int) bool {
-	return bytes.Compare(b[i], b[j]) == -1
+	return b[i] < b[j]
 }
 
 func (b byteSlices) Swap(i, j int) {
 	b[i], b[j] = b[j], b[i]
-}
-
-// logSort сортировка чанка за n log n
-func (s FileSorter) logSort(in []byte) (sorted [][]byte, left int) {
-	start := 0
-	curr := 0
-
-	for ; curr < len(in); curr++ {
-		if in[curr] == Separator {
-			sorted = append(sorted, in[start:curr+1])
-			start = curr + 1
-		}
-	}
-
-	left = len(in) - start
-
-	sort.Sort(byteSlices(sorted))
-
-	return
 }
 
 func (s FileSorter) maxLineSize() (uint64, error) {
@@ -151,36 +132,50 @@ func (s FileSorter) Sort() error {
 		}
 	}()
 
-	// первичная сортировка
-	inputBuffer := make([]byte, oneMemory)
-	for {
-		n, err := in.Read(inputBuffer)
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			return fmt.Errorf("error reading input file: %w", err)
-		}
-		realInputBuffer := inputBuffer[:n]
+	inBuffered := bufio.NewReader(in)
 
-		sorted, left := s.logSort(realInputBuffer)
-		_, err = in.Seek(int64(-left), 1)
-		if err != nil {
-			return fmt.Errorf("seek input file error: %w", err)
+	// первичная сортировка
+	var sorted []string
+	for {
+		memoryLeft := oneMemory
+		sorted = make([]string, 100)
+
+		runtime.GC()
+
+		for memoryLeft > 0 {
+			str, err := inBuffered.ReadString(Separator)
+			if err != nil {
+				if err == io.EOF {
+					break
+				}
+				return fmt.Errorf("error reading from input file")
+			}
+
+			memoryLeft -= len(str)
+
+			sorted = append(sorted, str)
 		}
+
+		if memoryLeft == oneMemory {
+			break
+		}
+
+		sort.Sort(byteSlices(sorted))
 
 		file, err := ioutil.TempFile(tempDir, "tmpfile-*")
 		if err != nil {
 			return err
 		}
-		err = file.Truncate(int64(n - left))
+		tempFiles = append(tempFiles, file)
+
+		err = file.Truncate(int64(oneMemory - memoryLeft))
 		if err != nil {
 			return fmt.Errorf("change temp file size error: %w", err)
 		}
 
-		tmpBuf := bufio.NewWriterSize(file, oneMemory)
+		tmpBuf := bufio.NewWriter(file)
 		for _, str := range sorted {
-			_, err = tmpBuf.Write(str)
+			_, err = tmpBuf.WriteString(str)
 			if err != nil {
 				return fmt.Errorf("write to temp file buffer error: %w", err)
 			}
@@ -189,8 +184,6 @@ func (s FileSorter) Sort() error {
 		if err != nil {
 			return fmt.Errorf("flush to temp file error: %w", err)
 		}
-
-		tempFiles = append(tempFiles, file)
 	}
 
 	// n-merge
